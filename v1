@@ -1,0 +1,281 @@
+"""Exporter for timetable data to CSV and JSON"""
+
+import json
+import csv
+from typing import List, Dict, Any
+from .utils import get_logger
+
+logger = get_logger(__name__)
+
+
+class TimetableExporter:
+    """Export timetable data to various formats"""
+    
+    def __init__(self, verbose: bool = False):
+        """Initialize exporter"""
+        self.verbose = verbose
+    
+    def export(
+        self, 
+        timetables: List[Dict[str, Any]], 
+        output_path: str, 
+        format: str = "csv"
+    ) -> None:
+        """
+        Export timetables to file
+        
+        Args:
+            timetables: List of timetable data
+            output_path: Path to output file
+            format: Export format ('csv' or 'json')
+        """
+        if format == "csv":
+            self._export_csv(timetables, output_path)
+        elif format == "json":
+            self._export_json(timetables, output_path)
+        else:
+            raise ValueError(f"Unsupported format: {format}")
+    
+    def _export_csv(self, timetables: List[Dict], output_path: str) -> None:
+        """Export timetables to CSV"""
+        if not timetables:
+            logger.warning("No timetables to export")
+            return
+        
+        try:
+            rows = []
+            
+            # Flatten timetable data
+            for timetable in timetables:
+                train_number = timetable.get("trainNumber", "")
+                train_type = timetable.get("trainType", "")
+                server_code = timetable.get("serverCode", "")
+                line_id = timetable.get("lineId", "")
+                distance = timetable.get("distance", "")
+                travel_time = timetable.get("travelTime", "")
+                available_seats = timetable.get("availableSeats", "")
+                stock_car = timetable.get("stockCar", "")
+                
+                # Process each timetable row (station stop)
+                timetable_rows = timetable.get("timetableRows", [])
+                
+                if timetable_rows:
+                    for row in timetable_rows:
+                        record = {
+                            "train_number": train_number,
+                            "train_type": train_type,
+                            "server_code": server_code,
+                            "line_id": line_id,
+                            "distance": distance,
+                            "travel_time": travel_time,
+                            "departure_station": row.get("departureStationName", ""),
+                            "departure_time": row.get("departureTime", ""),
+                            "arrival_station": row.get("arrivalStationName", ""),
+                            "arrival_time": row.get("arrivalTime", ""),
+                            "platform": row.get("platform", ""),
+                            "distance_km": row.get("distanceInKm", ""),
+                            "available_seats": available_seats,
+                            "stock_car": stock_car,
+                        }
+                        rows.append(record)
+                else:
+                    # No timetable rows - create single record
+                    record = {
+                        "train_number": train_number,
+                        "train_type": train_type,
+                        "server_code": server_code,
+                        "line_id": line_id,
+                        "distance": distance,
+                        "travel_time": travel_time,
+                        "departure_station": "",
+                        "departure_time": "",
+                        "arrival_station": "",
+                        "arrival_time": "",
+                        "platform": "",
+                        "distance_km": "",
+                        "available_seats": available_seats,
+                        "stock_car": stock_car,
+                    }
+                    rows.append(record)
+            
+            # Write CSV
+            if rows:
+                fieldnames = rows[0].keys()
+                with open(output_path, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(rows)
+                
+                logger.info(f"Exported {len(rows)} records to CSV: {output_path}")
+            else:
+                logger.warning("No records to export")
+        
+        except Exception as e:
+            logger.error(f"Failed to export CSV: {e}")
+            raise
+    
+    def _export_json(self, timetables: List[Dict], output_path: str) -> None:
+        """Export timetables to JSON"""
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(timetables, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"Exported {len(timetables)} timetables to JSON: {output_path}")
+        
+        except Exception as e:
+            logger.error(f"Failed to export JSON: {e}")
+            raise
+"""Utility functions"""
+
+import logging
+import os
+from datetime import datetime
+from pathlib import Path
+
+
+# Global logger instance
+_logger = None
+
+
+def setup_logger(verbose: bool = False) -> logging.Logger:
+    """Setup global logger"""
+    global _logger
+    
+    level = logging.DEBUG if verbose else logging.INFO
+    
+    _logger = logging.getLogger("simrail")
+    _logger.setLevel(level)
+    
+    # Console handler
+    handler = logging.StreamHandler()
+    handler.setLevel(level)
+    
+    # Formatter
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    handler.setFormatter(formatter)
+    
+    _logger.addHandler(handler)
+    
+    return _logger
+
+
+def get_logger(name: str) -> logging.Logger:
+    """Get logger instance"""
+    global _logger
+    if _logger is None:
+        setup_logger()
+    return logging.getLogger(name)
+
+
+def create_output_filename(
+    server_code: str,
+    train_number: str = None,
+    format: str = "csv"
+) -> str:
+    """Create output filename with timestamp"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    if train_number:
+        filename = f"timetable_{server_code}_{train_number}_{timestamp}"
+    else:
+        filename = f"timetable_{server_code}_{timestamp}"
+    
+    return f"{filename}.{format}"
+
+
+def ensure_output_dir(output_dir: str) -> str:
+    """Ensure output directory exists"""
+    path = Path(output_dir)
+    path.mkdir(parents=True, exist_ok=True)
+    return str(path)
+"""SimRail API client"""
+
+import requests
+import time
+from typing import Optional, List, Dict, Any
+from .utils import get_logger
+
+logger = get_logger(__name__)
+
+
+class SimRailAPI:
+    """Client for SimRail API"""
+    
+    BASE_URL = "https://api1.aws.simrail.eu:8082/api"
+    ENDPOINT = "/getAllTimetables"
+    
+    MAX_RETRIES = 3
+    RETRY_DELAY = 2
+    TIMEOUT = 30
+    
+    def __init__(self, verbose: bool = False):
+        """Initialize API client"""
+        self.verbose = verbose
+        self.session = requests.Session()
+        self.session.verify = False  # SimRail API uses self-signed cert
+        
+    def get_timetables(
+        self, 
+        server_code: str, 
+        train_number: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch timetables from SimRail API
+        
+        Args:
+            server_code: Server code (e.g., 'en1')
+            train_number: Optional train number to filter
+        
+        Returns:
+            List of timetables
+        """
+        params = {"serverCode": server_code}
+        if train_number:
+            params["train"] = train_number
+        
+        url = f"{self.BASE_URL}{self.ENDPOINT}"
+        
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                if self.verbose and attempt > 0:
+                    logger.info(f"Retry attempt {attempt}/{self.MAX_RETRIES}...")
+                
+                response = self.session.get(
+                    url,
+                    params=params,
+                    timeout=self.TIMEOUT
+                )
+                response.raise_for_status()
+                
+                data = response.json()
+                logger.info(f"Successfully fetched {len(data)} timetables")
+                return data
+            
+            except requests.exceptions.RequestException as e:
+                if attempt < self.MAX_RETRIES - 1:
+                    wait_time = self.RETRY_DELAY * (2 ** attempt)
+                    logger.warning(
+                        f"API request failed: {e}. "
+                        f"Retrying in {wait_time}s..."
+                    )
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"API request failed after {self.MAX_RETRIES} attempts: {e}")
+                    raise
+        
+        return []
+    
+    def close(self):
+        """Close the session"""
+        self.session.close()
+    
+    def __enter__(self):
+        """Context manager entry"""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit"""
+        self.close()
